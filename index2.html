@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Love Gauge - Gift Subs & KICKs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{--berry:#c2185b;--rose:#ff7aa8;--blush:#ffe3ec;--plum:#2a1020;--gold:#ffc83d;--lime:#7dff3a}
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Yu Gothic",sans-serif}
+  #band{position:fixed;left:0;right:0;bottom:48px;height:84px;display:flex;align-items:stretch;
+    transform:translateY(160px);opacity:0;transition:transform .7s cubic-bezier(.2,.8,.2,1),opacity .5s}
+  #band.on{transform:none;opacity:1}
+  #badge{flex:none;display:flex;flex-direction:column;justify-content:center;padding:0 34px 0 24px;
+    background:var(--berry);color:#fff;border-radius:0 42px 42px 0;position:relative;z-index:2;
+    box-shadow:6px 0 18px rgba(42,16,32,.35);min-width:230px}
+  #badge .t{display:flex;align-items:center;gap:10px;font-weight:900;font-size:28px;letter-spacing:.04em;line-height:1.1}
+  #badge svg{width:32px;height:32px;animation:beat 1.1s ease-in-out infinite}
+  #badge .s{font-weight:700;font-size:22px;color:var(--blush);margin-left:42px;line-height:1.2;transition:opacity .3s}
+  @keyframes beat{0%,100%{transform:scale(1)}15%{transform:scale(1.2)}30%{transform:scale(1)}}
+  #lane{flex:1;position:relative;overflow:hidden;margin-left:-42px;padding-left:42px;
+    background:linear-gradient(90deg,rgba(42,16,32,.92),rgba(42,16,32,.82))}
+  #track{position:absolute;top:0;bottom:0;left:0;display:flex;align-items:center;gap:56px;white-space:nowrap;will-change:transform}
+  .item{display:flex;align-items:center;gap:14px;color:var(--blush);font-weight:700;font-size:30px}
+  .rank{font-weight:900;font-size:34px;min-width:44px;text-align:right;color:var(--rose)}
+  .item.r1 .rank{color:var(--gold)}
+  .item.r2 .rank,.item.r3 .rank{color:#fff}
+  .gauge{width:120px;height:14px;border-radius:7px;background:rgba(255,255,255,.18);overflow:hidden}
+  .gauge i{display:block;height:100%;border-radius:7px;background:linear-gradient(90deg,var(--rose),var(--gold))}
+  .count{font-weight:900;color:#fff}
+  .count small{font-weight:500;font-size:20px;color:var(--rose);margin-left:4px}
+  .note{color:var(--rose);font-size:24px}
+  @media (prefers-reduced-motion:reduce){#badge svg{animation:none}}
+  #dbg{position:fixed;top:8px;left:8px;font:14px monospace;color:#7dff3a;background:rgba(0,0,0,.6);padding:6px 8px;border-radius:6px;white-space:pre;display:none}
+</style>
+</head>
+<body>
+<div id="dbg"></div>
+<div id="band">
+  <div id="badge">
+    <div class="t"><svg viewBox="0 0 24 24" fill="#fff"><path d="M12 21s-7.5-4.6-9.6-9.4C.9 8 3 4.5 6.6 4.5c2 0 3.7 1.1 5.4 3 1.7-1.9 3.4-3 5.4-3C21 4.5 23.1 8 21.6 11.6 19.5 16.4 12 21 12 21z"/></svg>LOVE GAUGE</div>
+    <div class="s" id="sub"></div>
+  </div>
+  <div id="lane"><div id="track"></div></div>
+</div>
+
+<script>
+/* ============ 設定 ============
+   数字(base)は、これまでの累計。配信中に増えた分は自動で足されます。
+   ?demo=1 : すぐ流れて確認   ?debug=1 : 接続状況を左上に表示   ?reset=1 : 自動で足した分をリセット */
+const CHATROOM_ID = 610145;
+const CONFIG = {
+  everySec: 600,   // 何秒おきに出すか(600=10分)
+  speedPx:  90,    // 流れる速さ(px/秒) 小さいほど遅い
+  sets: [
+    { key: "subs",  label: "GIFT SUBS", unit: "subs", items: [
+      ["Drachiel",788],["Tbird11",453],["swoOp",354],["Clouds_Of_Neptune",256],["craxus",194],
+      ["TheDarkByte",175],["Wan_King2U",169],["Lexiex",148],["cooldr",135],["StevenSegull",117]
+    ]},
+    { key: "kicks", label: "KICKs", unit: "KICKs", items: [
+      ["JaySuavecito",7950],["penguinsoldier",5700],["Drachiel",2500],["bugsy_papadop",2200],["Scarors",1500],
+      ["CamillaRoseXox",1000],["4q2q",1000],["luvthick",1000],["JimC650",600],["oof0",574]
+    ]}
+  ]
+};
+/* ============================== */
+
+const P = new URLSearchParams(location.search);
+const DEMO = P.get("demo") === "1", DEBUG = P.get("debug") === "1";
+const $band = document.getElementById("band"), $track = document.getElementById("track"),
+      $sub = document.getElementById("sub"), $lane = document.getElementById("lane"), $dbg = document.getElementById("dbg");
+const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+/* ---- 配信中に増えた分を保存(OBSを再起動しても残る) ---- */
+const KEY = "lg_added_v1";
+if (P.get("reset") === "1") { try{localStorage.removeItem(KEY)}catch(e){} }
+let added = { subs:{}, kicks:{} };
+try { added = Object.assign(added, JSON.parse(localStorage.getItem(KEY)) || {}); } catch(e){}
+function addCount(kind, name, n){
+  if (!name || !(n > 0)) return;
+  added[kind] = added[kind] || {};
+  added[kind][name] = (added[kind][name] || 0) + n;
+  try{ localStorage.setItem(KEY, JSON.stringify(added)); }catch(e){}
+  log(`+${n} ${kind} ${name}`);
+}
+function merged(set){
+  const m = new Map();
+  for (const [n,c] of set.items) m.set(n.toLowerCase(), {name:n, count:c});
+  for (const [n,c] of Object.entries(added[set.key]||{})){
+    const k = n.toLowerCase();
+    if (m.has(k)) m.get(k).count += c; else m.set(k, {name:n, count:c});
+  }
+  return [...m.values()].sort((a,b)=>b.count-a.count).slice(0,10);
+}
+
+/* ---- Kickの公開チャットを読む(ログイン・キー不要) ---- */
+let status = "connecting", lastEvents = [];
+function log(t){ lastEvents.unshift(t); lastEvents = lastEvents.slice(0,6); render(); }
+function render(){ if(!DEBUG) return; $dbg.style.display="block"; $dbg.textContent = `status: ${status}\n` + lastEvents.join("\n"); }
+
+function onEvent(evt, raw){
+  if (evt.startsWith("pusher")) return;
+  let d = raw; try{ d = typeof raw === "string" ? JSON.parse(raw) : raw; }catch(e){ return; }
+  if (DEBUG && !/ChatMessage|Pinned|Message|Reply|Poll|Prediction/i.test(evt)) log("evt: " + evt.replace("App\\Events\\",""));
+  if (/GiftedSubscriptions/i.test(evt)){
+    const name = d.gifter_username || (d.gifter && d.gifter.username);
+    const n = (d.gifted_usernames && d.gifted_usernames.length) || d.quantity || 1;
+    addCount("subs", name, n);
+  } else if (/KicksGifted/i.test(evt)){
+    const name = d.sender && d.sender.username;
+    const amt = (d.gift && d.gift.amount) || d.amount || 0;
+    addCount("kicks", name, +amt);
+  }
+}
+
+function connect(){
+  const ws = new WebSocket("wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false");
+  ws.onmessage = ev => {
+    let m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
+    if (m.event === "pusher:connection_established"){
+      status = "connected";
+      for (const ch of [`chatrooms.${CHATROOM_ID}.v2`, `chatroom_${CHATROOM_ID}`])
+        ws.send(JSON.stringify({event:"pusher:subscribe", data:{auth:"", channel:ch}}));
+      render();
+    } else if (m.event === "pusher:ping"){
+      ws.send(JSON.stringify({event:"pusher:pong", data:{}}));
+    } else {
+      onEvent(m.event || "", m.data);
+    }
+  };
+  ws.onclose = ws.onerror = () => { status = "reconnecting"; render(); setTimeout(connect, 5000); };
+}
+
+/* ---- テロップ ---- */
+function build(set){
+  const list = merged(set), max = Math.max(...list.map(x=>x.count));
+  $sub.textContent = set.label;
+  $track.innerHTML = list.map((x,i)=>`
+    <div class="item r${i+1}">
+      <span class="rank">${i+1}</span>
+      <span class="name">${esc(x.name)}</span>
+      <span class="gauge"><i style="width:${Math.max(6,Math.round(x.count/max*100))}%"></i></span>
+      <span class="count">${x.count.toLocaleString("en-US")}<small>${esc(set.unit)}</small></span>
+    </div>`).join("") + `<div class="note">♥ thank you for the love!</div>`;
+}
+async function runSet(set){
+  build(set);
+  const start = $lane.clientWidth, end = -$track.scrollWidth;
+  const dur = (start - end) / CONFIG.speedPx * 1000;
+  await $track.animate([{transform:`translateX(${start}px)`},{transform:`translateX(${end}px)`}],
+                       {duration:dur, easing:"linear", fill:"forwards"}).finished;
+}
+async function runAll(){
+  $band.classList.add("on");
+  await sleep(700);
+  for (const s of CONFIG.sets) await runSet(s);
+  $band.classList.remove("on");
+}
+
+if (!DEMO || DEBUG) connect();
+render();
+(async function loop(){
+  await sleep(DEMO ? 300 : 8000);
+  while(true){
+    await runAll();
+    await sleep(CONFIG.everySec*1000);
+  }
+})();
+</script>
+</body>
+</html>
